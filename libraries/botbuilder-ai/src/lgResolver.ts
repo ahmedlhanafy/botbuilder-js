@@ -134,7 +134,7 @@ class LGRequest {
 // Not implemented
 class LGResponse {}
 
-// The class that talks to the LG backend
+// Not implemented
 class LGAPI {
   constructor(private lgEndpoint: LGEndpoint, private lgOptions: LGOptions) {}
 
