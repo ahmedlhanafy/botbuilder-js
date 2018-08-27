@@ -5,19 +5,12 @@
  * Licensed under the MIT License.
  */
 
-import { Activity as IActivity } from 'botbuilder';
-
-/**
- * ## Notes:
- *  1) This code just demonstrates how this module will be built, changes to the internals might occur, however, the public classes will remain as is.
- *  2) This module still lacks proper comments and doesn't fully adhere to TSLint rules; this will change in the final PR.
- *
- * ## Questions:
- *  1) Is there an API that can request multiple slots in the same HTTP call?
- */
+import { Activity as IActivity } from '../../botbuilder';
+import { replace, isEmpty } from 'lodash';
 
 //  ######################################### EXPORTED API #########################################
 
+export type PrimitiveType = string | number | boolean | Date;
 export type PrimitiveArray = string[] | number[] | boolean[] | Date[];
 
 export class LGEndpoint {
@@ -37,7 +30,17 @@ export class LGEndpoint {
     lgAppId: string,
     endpointUri: string,
   ): void {
-    // throw new Error('Method not implemented.');
+    if (isEmpty(endpointKey)) {
+      throw new Error(`Endpoint key can't be undefined or empty`);
+    }
+
+    if (isEmpty(lgAppId)) {
+      throw new Error(`LG app ID can't be undefined or empty`);
+    }
+
+    if (isEmpty(endpointUri)) {
+      throw new Error(`Endpoint URI can't be undefined or empty`);
+    }
   }
 
   public get endpointKey(): string {
@@ -63,18 +66,23 @@ export class LGResolver {
 
   public async resolve(
     activity: Activity,
-    entities: Map<string, PrimitiveArray>,
+    entities: Map<string, PrimitiveType>,
   ): Promise<void> {
-    const slots = SlotBuilder.extractSlots(activity, entities);
+    const templateResolutions = new Map<string, string>();
+
+    const slots = ActivityUtilities.extractSlots(activity, entities);
 
     const requestPromises = slots
       .map(slot => new LGRequest(slot))
       .map(this.lgApi.fetch);
+
     const responses = await Promise.all(requestPromises);
 
-    console.log(responses);
+    responses.forEach(lgRes =>
+      templateResolutions.set(lgRes.templateReference, lgRes.stateResolution),
+    );
 
-    // ActivityModifier.injectResponses(activity, responses);
+    ActivityUtilities.injectResponses(activity, templateResolutions);
   }
 }
 
@@ -96,8 +104,14 @@ const speakInspector: IActivityInspector = (activity: Activity): string[] => {
 const cardInspector: IActivityInspector = (activity: Activity): string[] => {
   if (activity.suggestedActions && activity.suggestedActions.actions) {
     return activity.suggestedActions.actions.reduce((acc, action) => {
-      acc.concat(PatternRecognizer.extractPatterns(action.text));
-      acc.concat(PatternRecognizer.extractPatterns(action.displayText));
+      if (action.text) {
+        acc.concat(PatternRecognizer.extractPatterns(action.text));
+      }
+
+      if (action.displayText) {
+        acc.concat(PatternRecognizer.extractPatterns(action.displayText));
+      }
+
       return acc;
     }, []);
   }
@@ -108,66 +122,61 @@ const cardInspector: IActivityInspector = (activity: Activity): string[] => {
 //  ----------------------------------------- Activity Injectors -----------------------------------------
 type IActivityInjector = (
   activity: Activity,
-  templateResolution: string,
+  templateResolutions: Map<string, string>,
 ) => void;
 
 const textInjector: IActivityInjector = (
   activity: Activity,
-  templateResolution: string,
+  templateResolutions: Map<string, string>,
 ): void => {
   const text = activity.text;
   if (text) {
-    PatternRecognizer.replacePatterns(text, templateResolution);
+    activity.text = PatternRecognizer.replacePatterns(
+      text,
+      templateResolutions,
+    );
   }
 };
 
 const speakInjector: IActivityInjector = (
   activity: Activity,
-  templateResolution: string,
+  templateResolutions: Map<string, string>,
 ): void => {
   const speak = activity.speak;
   if (speak) {
-    PatternRecognizer.replacePatterns(speak, templateResolution);
+    activity.speak = PatternRecognizer.replacePatterns(
+      speak,
+      templateResolutions,
+    );
   }
 };
 
 const cardInjector: IActivityInjector = (
   activity: Activity,
-  templateResolution: string,
+  templateResolutions: Map<string, string>,
 ): void => {
   if (activity.suggestedActions && activity.suggestedActions.actions) {
     activity.suggestedActions.actions.forEach(action => {
-      PatternRecognizer.replacePatterns(action.text, templateResolution);
-      PatternRecognizer.replacePatterns(action.displayText, templateResolution);
+      if (action.text) {
+        action.text = PatternRecognizer.replacePatterns(
+          action.text,
+          templateResolutions,
+        );
+      }
+      if (action.displayText) {
+        action.displayText = PatternRecognizer.replacePatterns(
+          action.displayText,
+          templateResolutions,
+        );
+      }
     });
   }
 };
 
 //  ----------------------------------------- Helpers -----------------------------------------
-class SlotBuilder {
-  // Searches for template references inside the activity and constructs slots
-  public static extractSlots(
-    activity: Activity,
-    entities: Map<string, PrimitiveArray>,
-  ): Slot[] {
-    // Utilize activity inspectors to extract the template references
-    const inspectors = [
-      ...textInspector(activity),
-      ...speakInspector(activity),
-      ...cardInspector(activity),
-    ];
-
-    const stateNames = new Set(inspectors);
-    const slots: Slot[] = [];
-
-    stateNames.forEach(stateName => {
-      slots.push(new Slot(stateName, entities));
-    });
-
-    return slots;
-  }
-}
-
+/**
+ * @private
+ */
 export class PatternRecognizer {
   static readonly regex = /[^[\]]+(?=])/g;
   // Recognizes and returns template references
@@ -188,19 +197,59 @@ export class PatternRecognizer {
 
   public static replacePatterns(
     originalText: string,
-    templateResolution: string,
-  ) {
-    originalText.replace(this.regex, templateResolution);
+    templateResolutions: Map<string, string>,
+  ): string {
+    let modifiedText = originalText;
+    templateResolutions.forEach((stateResolution, templateReference) => {
+      modifiedText = replace(
+        modifiedText,
+        `[${templateReference}]`,
+        stateResolution,
+      );
+    });
+
+    return modifiedText;
   }
 }
 
-class ActivityModifier {
+/**
+ * @private
+ */
+export class ActivityUtilities {
+  // Searches for template references inside the activity and constructs slots
+  public static extractSlots(
+    activity: Activity,
+    entities: Map<string, PrimitiveType>,
+  ): Slot[] {
+    // Utilize activity inspectors to extract the template references
+    const inspectors = [
+      ...textInspector(activity),
+      ...speakInspector(activity),
+      ...cardInspector(activity),
+    ];
+
+    const stateNames = new Set(inspectors);
+    const slots: Slot[] = [];
+
+    stateNames.forEach(stateName => {
+      slots.push(new Slot(stateName, entities));
+    });
+
+    return slots;
+  }
+
   // Searches for template references inside the activity and replaces them with the actual text coming from the LG backend
   public static injectResponses(
     activity: Activity,
-    responses: LGResponse[],
+    templateReferences: Map<string, string>,
   ): void {
-    // responses 
+    const injectors: IActivityInjector[] = [
+      textInjector,
+      speakInjector,
+      cardInjector,
+    ];
+
+    injectors.forEach(injector => injector(activity, templateReferences));
   }
 }
 
@@ -208,20 +257,19 @@ class ActivityModifier {
 class Slot {
   constructor(
     public stateName: string,
-    public entities: Map<string, PrimitiveArray>,
+    public entities: Map<string, PrimitiveType>,
   ) {}
 }
 
 //  ----------------------------------------- LG API -----------------------------------------
 // Not implemented
 class LGRequest {
-  _fields: Map<string, string>;
-  constructor(private slot: Slot) {
+  public static readonly STATE_NAME_KEY = 'GetStateName';
+  private _fields: Map<string, string>;
+  constructor(slot: Slot) {
     this._fields = new Map<string, string>();
-    this._fields.set('GetStateName', slot.stateName);
-    slot.entities.forEach((val, key) =>
-      this._fields.set(key, val[0].toString()),
-    );
+    this._fields.set(LGRequest.STATE_NAME_KEY, slot.stateName);
+    slot.entities.forEach((val, key) => this._fields.set(key, val.toString()));
   }
 
   get fields() {
@@ -231,7 +279,7 @@ class LGRequest {
 
 // Not implemented
 class LGResponse {
-  constructor(public stateResolution: string) {}
+  constructor(public templateReference, public stateResolution: string) {}
 }
 
 // Not implemented
@@ -239,7 +287,9 @@ class LGAPI {
   constructor(private lgEndpoint: LGEndpoint, private lgOptions: LGOptions) {}
 
   public async fetch(request: LGRequest): Promise<LGResponse> {
-    return Promise.resolve(new LGResponse('hello awesome people'));
+    return Promise.resolve(
+      new LGResponse(request.fields.get(LGRequest.STATE_NAME_KEY), 'hello'),
+    );
   }
 }
 
@@ -276,7 +326,7 @@ const expect = val => {
 };
 
 describe('Pattern Recognizer', () => {
-  it('extracts all template references', () => {
+  it('should extract all template references', () => {
     const templateReferences = PatternRecognizer.extractPatterns(
       '[sayGoodMorning], John!',
     );
@@ -284,11 +334,12 @@ describe('Pattern Recognizer', () => {
     expect(templateReferences[0]).toEqual('sayGoodMorning');
 
     const templateReferences1 = PatternRecognizer.extractPatterns(
-      '[sayHello], John! [welcomePhrase] to the new office.',
+      '[sayHello], John! [welcomePhrase] to the {new} office.',
     );
 
     expect(templateReferences1[0]).toEqual('sayHello');
     expect(templateReferences1[1]).toEqual('welcomePhrase');
+    expect(templateReferences1.length).toEqual(2);
 
     const templateReferences2 = PatternRecognizer.extractPatterns(
       '[sayGoodBye], John! [thankingPhrase] for your time, [scheduleMeeting].',
@@ -298,11 +349,57 @@ describe('Pattern Recognizer', () => {
     expect(templateReferences2[2]).toEqual('scheduleMeeting');
   });
 
-  it('returns empty array if no template references was found', () => {
+  it('should return an empty array if no template references are found', () => {
     const templateReferences = PatternRecognizer.extractPatterns(
       'Hello John, welcome to BF!',
     );
     expect(templateReferences.length).toBe(0);
+  });
+
+  it('should replace all template references with their corresponding resolutions', () => {
+    const templateReferences = new Map().set('sayGoodMorning', 'Hello');
+
+    const newUtterance = PatternRecognizer.replacePatterns(
+      '[sayGoodMorning], John!',
+      templateReferences,
+    );
+
+    expect(newUtterance).toEqual('Hello, John!');
+
+    const templateReferences1 = new Map()
+      .set('sayHello', 'hello')
+      .set('welcomePhrase', 'welcome');
+
+    const newUtterance1 = PatternRecognizer.replacePatterns(
+      '[sayHello], John! [welcomePhrase] to the {new} office.',
+      templateReferences1,
+    );
+
+    expect(newUtterance1).toEqual('hello, John! welcome to the {new} office.');
+
+    const templateReferences2 = new Map()
+      .set('sayGoodBye', 'Bye')
+      .set('thankingPhrase', 'thanks')
+      .set('scheduleMeeting', `let's have a meeting`);
+
+    const newUtterance2 = PatternRecognizer.replacePatterns(
+      '[sayGoodBye], John! [thankingPhrase] for your time, [scheduleMeeting].',
+      templateReferences2,
+    );
+
+    expect(newUtterance2).toEqual(
+      `Bye, John! thanks for your time, let's have a meeting.`,
+    );
+  });
+  it('should keep text as is if no template references are found', () => {
+    const templateReferences = new Map().set('sayGoodMorning', 'Hello');
+
+    const newUtterance = PatternRecognizer.replacePatterns(
+      'Hello John, welcome to BF!',
+      templateReferences,
+    );
+
+    expect(newUtterance).toEqual('Hello John, welcome to BF!');
   });
 });
 
@@ -350,18 +447,21 @@ class Activity implements IActivity {
 describe('LGResolver', () => {
   it('', () => {
     const resolver = new LGResolver(
-      new LGEndpoint('', '', ''),
+      new LGEndpoint('qw', 'rt', 'yu'),
       new LGOptions(),
     );
 
     const activity = new Activity();
     activity.text = '[sayHello], John! [welcomePhrase] to the new office.';
+    activity.speak = '[sayHi] Micheal, what is the weather like [today]';
 
-    const entities = new Map<string, PrimitiveArray>();
-    entities.set('name', ['john']);
-    entities.set('city', ['paris']);
-    entities.set('tickets', [3]);
+    const entities = new Map<string, PrimitiveType>();
 
-    resolver.resolve(activity, entities).then(() => {});
+    resolver.resolve(activity, entities).then(() => {
+      expect(activity.text).toEqual('hello, John! hello to the new office.');
+      expect(activity.speak).toEqual(
+        'hello Micheal, what is the weather like hello',
+      );
+    });
   });
 });
