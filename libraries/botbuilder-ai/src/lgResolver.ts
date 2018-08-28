@@ -5,19 +5,40 @@
  * Licensed under the MIT License.
  */
 
+/**
+ * Tasks:
+ *
+ * 1) Add entities later in the pipeline -> Done
+ * 2) Accomodate changes coming from the swagger file -> Done
+ * 3) Update unit tests
+ * 4) Create integration tests
+ * 5) Change LG to LanguageGeneration -> Done
+ * 6) Discuss keys situation with Amr
+ * 7) Unify error messages
+ */
+
 import {
   Activity as IActivity,
   CardAction as ICardAction,
   SuggestedActions as ISuggestedActions,
 } from '../../botbuilder';
-import { isEmpty, isNil, replace } from 'lodash';
+import {
+  isEmpty,
+  isNil,
+  replace,
+  isBoolean,
+  isNumber,
+  isDate,
+  isInteger,
+  isString,
+} from 'lodash';
+import * as request from 'request-promise-native';
 
 //  ######################################### EXPORTED API #########################################
 
 export type PrimitiveType = string | number | boolean | Date;
-export type PrimitiveArray = string[] | number[] | boolean[] | Date[];
 
-export class LGEndpoint {
+export class LanguageGenerationEndpoint {
   private _endpointKey: string;
   private _lgAppId: string;
   private _endpointUri: string;
@@ -60,11 +81,14 @@ export class LGEndpoint {
   }
 }
 
-export class LGOptions {}
+export class LanguageGenerationOptions {}
 
-export class LGResolver {
+export class LanguageGenerationResolver {
   private lgApi: LGAPI;
-  constructor(lgEndpoint: LGEndpoint, lgOptions: LGOptions) {
+  constructor(
+    private lgEndpoint: LanguageGenerationEndpoint,
+    private lgOptions: LanguageGenerationOptions,
+  ) {
     this.lgApi = new LGAPI(lgEndpoint, lgOptions);
   }
 
@@ -82,17 +106,33 @@ export class LGResolver {
 
     const templateResolutions = new Map<string, string>();
 
-    const slots = ActivityUtilities.extractSlots(activity, entities);
+    const templateReferencesSlots = ActivityUtilities.extractTemplateReferencesSlots(
+      activity,
+    );
 
-    const requestPromises = slots
-      .map(slot => new LGRequest(slot))
+    const entitiesSlots = ActivityUtilities.convertEntitiesToSlots(entities);
+
+    const requestPromises = templateReferencesSlots
+      .map(templateReferences =>
+        new LGRequestBuilder()
+          .setScenario(this.lgEndpoint.lgAppId)
+          .setLocale(activity.locale)
+          .setSlots([templateReferences, ...entitiesSlots])
+          .build(),
+      )
       .map(this.lgApi.fetch);
 
     const responses = await Promise.all(requestPromises);
 
-    responses.forEach(lgRes =>
-      templateResolutions.set(lgRes.templateReference, lgRes.stateResolution),
-    );
+    responses.forEach(lgRes => {
+      const templateReference = Object.keys(lgRes.outputs)[0];
+      const templateResolution = lgRes.outputs[templateReference];
+
+      templateResolutions.set(
+        templateReference,
+        Utilities.convertLGValueToString(templateResolution),
+      );
+    });
 
     ActivityUtilities.injectResponses(activity, templateResolutions);
   }
@@ -239,11 +279,11 @@ export class PatternRecognizer {
  * @private
  */
 export class ActivityUtilities {
+  static convertEntitiesToSlots(entities: Map<string, PrimitiveType>): any {
+    throw new Error('Method not implemented.');
+  }
   // Searches for template references inside the activity and constructs slots
-  public static extractSlots(
-    activity: IActivity,
-    entities: Map<string, PrimitiveType>,
-  ): Slot[] {
+  public static extractTemplateReferencesSlots(activity: IActivity): Slot[] {
     // Utilize activity inspectors to extract the template references
     const inspectors = [
       ...textInspector(activity),
@@ -255,7 +295,7 @@ export class ActivityUtilities {
     const slots: Slot[] = [];
 
     stateNames.forEach(stateName => {
-      slots.push(new Slot(stateName, entities));
+      slots.push(new Slot(Slot.STATE_NAME_KEY, stateName));
     });
 
     return slots;
@@ -278,41 +318,145 @@ export class ActivityUtilities {
 
 // Not implemented
 export class Slot {
-  constructor(
-    public stateName: string,
-    public entities: Map<string, PrimitiveType>,
-  ) {}
+  public static readonly STATE_NAME_KEY = 'GetStateName';
+  constructor(public readonly key: string, public value: PrimitiveType) {}
 }
 
 //  ----------------------------------------- LG API -----------------------------------------
-// Not implemented
-class LGRequest {
-  public static readonly STATE_NAME_KEY = 'GetStateName';
-  private _fields: Map<string, string>;
-  constructor(slot: Slot) {
-    this._fields = new Map<string, string>();
-    this._fields.set(LGRequest.STATE_NAME_KEY, slot.stateName);
-    slot.entities.forEach((val, key) => this._fields.set(key, val.toString()));
-  }
 
-  get fields() {
-    return this._fields;
+class Utilities {
+  public static convertLGValueToString(value: ILGValue): string {
+    switch (value.valueType) {
+      case 0:
+        return value.stringValues[0];
+      case 1:
+        return value.intValues[0].toString();
+      case 2:
+        return value.floatValues[0].toString();
+      case 3:
+        return value.booleanValues[0].toString();
+      case 4:
+        return value.dateTimeValues[0].toString();
+      default:
+        //@TODO
+        throw new Error('Internal Error');
+    }
+  }
+  public static convertSlotToLGValue(slot: Slot): ILGValue {
+    const value = slot.value;
+
+    if (isString(value)) {
+      return {
+        stringValues: [value],
+        valueType: 0,
+      };
+    } else if (isNumber(value)) {
+      if (isInteger(value)) {
+        return {
+          intValues: [value],
+          valueType: 1,
+        };
+      } else {
+        return {
+          intValues: [value],
+          valueType: 2,
+        };
+      }
+    } else if (isBoolean(value)) {
+      return {
+        booleanValues: [value],
+        valueType: 3,
+      };
+    } else if (isDate(value)) {
+      return {
+        dateTimeValues: [value.toISOString()],
+        valueType: 3,
+      };
+    }
+
+    // @TODO
+    throw new Error('');
   }
 }
 
-// Not implemented
-class LGResponse {
-  constructor(public templateReference, public stateResolution: string) {}
+interface ILGValue {
+  valueType: 0 | 1 | 2 | 3 | 4;
+  stringValues?: string[]; // valueType -> 0
+  intValues?: number[]; // valueType -> 1
+  // @TODO
+  floatValues?: number[]; // valueType -> 2
+  booleanValues?: boolean[]; // valueType -> 3
+  dateTimeValues?: string[]; // valueType -> 4
 }
 
-// Not implemented
-class LGAPI {
-  constructor(private lgEndpoint: LGEndpoint, private lgOptions: LGOptions) {}
+interface ILGRequest {
+  scenario: string;
+  locale: string;
+  slots: { [key: string]: ILGValue };
+}
 
-  public async fetch(request: LGRequest): Promise<LGResponse> {
-    return Promise.resolve(
-      new LGResponse(request.fields.get(LGRequest.STATE_NAME_KEY), 'hello'),
+class LGRequestBuilder {
+  private locale: string;
+  private scenario: string;
+  private slots: Slot[];
+
+  public setSlots(slots: Slot[]): LGRequestBuilder {
+    this.slots = slots;
+
+    return this;
+  }
+
+  public setLocale(locale: string): LGRequestBuilder {
+    this.locale = locale;
+
+    return this;
+  }
+
+  public setScenario(scenario: string): LGRequestBuilder {
+    this.scenario = scenario;
+
+    return this;
+  }
+
+  public build(): ILGRequest {
+    const slotsJSON: { [key: string]: ILGValue } = this.slots.reduce(
+      (acc, slot) => {
+        const lgValue = Utilities.convertSlotToLGValue(slot);
+        acc[slot.key] = lgValue;
+        return acc;
+      },
+      {},
     );
+
+    return {
+      locale: this.locale,
+      scenario: this.scenario,
+      slots: slotsJSON,
+    };
+  }
+}
+
+interface ILGResponse {
+  outputs: { [key: string]: ILGValue };
+}
+
+class LGAPI {
+  private readonly URL = 'https://lg-cris-dev.westus2.cloudapp.azure.com/v1/lg';
+  constructor(
+    private readonly lgEndpoint: LanguageGenerationEndpoint,
+    private readonly lgOptions: LanguageGenerationOptions,
+  ) {}
+
+  public async fetch(lgRequest: ILGRequest): Promise<ILGResponse> {
+    return await request({
+      url: this.URL,
+      method: 'POST',
+      headers: { Authorization: this.lgEndpoint.endpointKey },
+      body: {
+        ...lgRequest,
+      },
+      json: true,
+    });
   }
 }
 
@@ -547,11 +691,11 @@ describe('ActivityUtilities', () => {
   });
 });
 
-describe('LGResolver', () => {
+describe('LanguageGenerationResolver', () => {
   it('', () => {
-    const resolver = new LGResolver(
-      new LGEndpoint('qw', 'rt', 'yu'),
-      new LGOptions(),
+    const resolver = new LanguageGenerationResolver(
+      new LanguageGenerationEndpoint('qw', 'rt', 'yu'),
+      new LanguageGenerationOptions(),
     );
 
     const activity = new Activity();
