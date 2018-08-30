@@ -5,18 +5,6 @@
  * Licensed under the MIT License.
  */
 
-/**
- * Tasks:
- *
- * 1) Add entities later in the pipeline -> Done
- * 2) Accomodate changes coming from the swagger file -> Done
- * 3) Update unit tests
- * 4) Create integration tests
- * 5) Change LG to LanguageGeneration -> Done
- * 6) Discuss keys situation with Amr
- * 7) Unify error messages
- */
-
 import { Activity } from '../../botbuilder';
 import {
   isEmpty,
