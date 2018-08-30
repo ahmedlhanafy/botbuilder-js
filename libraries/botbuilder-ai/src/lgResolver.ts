@@ -17,11 +17,7 @@
  * 7) Unify error messages
  */
 
-import {
-  Activity as IActivity,
-  CardAction as ICardAction,
-  SuggestedActions as ISuggestedActions,
-} from '../../botbuilder';
+import { Activity } from '../../botbuilder';
 import {
   isEmpty,
   isNil,
@@ -38,62 +34,29 @@ import * as request from 'request-promise-native';
 
 export type PrimitiveType = string | number | boolean | Date;
 
-export class LanguageGenerationEndpoint {
-  private _endpointKey: string;
-  private _lgAppId: string;
-  private _endpointUri: string;
+export interface LanguageGenerationApplication {
+  applicationId: string;
 
-  constructor(endpointKey: string, lgAppId: string, endpointUri: string) {
-    this.validateInputs(endpointKey, lgAppId, endpointUri);
-    this._endpointKey = endpointKey;
-    this._lgAppId = lgAppId;
-    this._endpointUri = endpointUri;
-  }
+  /** (Optional) Azure region */
+  azureRegion?: string;
 
-  private validateInputs(
-    endpointKey: string,
-    lgAppId: string,
-    endpointUri: string,
-  ): void {
-    if (isEmpty(endpointKey)) {
-      throw new Error(`Endpoint key can't be undefined or empty`);
-    }
-
-    if (isEmpty(lgAppId)) {
-      throw new Error(`LG app ID can't be undefined or empty`);
-    }
-
-    if (isEmpty(endpointUri)) {
-      throw new Error(`Endpoint URI can't be undefined or empty`);
-    }
-  }
-
-  public get endpointKey(): string {
-    return this._endpointKey;
-  }
-
-  public get lgAppId(): string {
-    return this._lgAppId;
-  }
-
-  public get endpointUri(): string {
-    return this._endpointUri;
-  }
+  endpointKey: string;
 }
 
-export class LanguageGenerationOptions {}
+export interface LanguageGenerationOptions {}
 
 export class LanguageGenerationResolver {
   private lgApi: LGAPI;
   constructor(
-    private lgEndpoint: LanguageGenerationEndpoint,
-    private lgOptions: LanguageGenerationOptions,
+    private application: LanguageGenerationApplication,
+    private options: LanguageGenerationOptions,
   ) {
-    this.lgApi = new LGAPI(lgEndpoint, lgOptions);
+    this.validateApplicationInputs();
+    this.lgApi = new LGAPI(application, options);
   }
 
   public async resolve(
-    activity: IActivity,
+    activity: Activity,
     entities: Map<string, PrimitiveType>,
   ): Promise<void> {
     if (isNil(activity)) {
@@ -104,57 +67,60 @@ export class LanguageGenerationResolver {
       throw new Error("Entities can't be null or undefined");
     }
 
-    const templateResolutions = new Map<string, string>();
+    const slotsBuilder = new SlotsBuilder(activity);
+    const activityInjector = new ActivityInjector(activity);
 
-    const templateReferencesSlots = ActivityUtilities.extractTemplateReferencesSlots(
-      activity,
+    const [templateReferencesSlots, entitiesSlots] = slotsBuilder.build(
+      entities,
     );
 
-    const entitiesSlots = ActivityUtilities.convertEntitiesToSlots(entities);
-
-    const requestPromises = templateReferencesSlots
-      .map(templateReferences =>
+    const requestsPromises = templateReferencesSlots
+      .map(templateReferenceSlot =>
         new LGRequestBuilder()
-          .setScenario(this.lgEndpoint.lgAppId)
+          .setScenario(this.application.applicationId)
           .setLocale(activity.locale)
-          .setSlots([templateReferences, ...entitiesSlots])
+          .setSlots([templateReferenceSlot, ...entitiesSlots])
           .build(),
       )
       .map(this.lgApi.fetch);
 
-    const responses = await Promise.all(requestPromises);
+    const responses = await Promise.all(requestsPromises);
 
-    responses.forEach(lgRes => {
-      const templateReference = Object.keys(lgRes.outputs)[0];
-      const templateResolution = lgRes.outputs[templateReference];
+    const templateResolutions = Utilities.transformLGResponsestoMap(responses);
 
-      templateResolutions.set(
-        templateReference,
-        Utilities.convertLGValueToString(templateResolution),
-      );
-    });
+    activityInjector.injectTemplateReferences(templateResolutions);
+  }
 
-    ActivityUtilities.injectResponses(activity, templateResolutions);
+  private validateApplicationInputs(): void {
+    if (isEmpty(this.application.applicationId)) {
+      //@TODO
+      throw new Error(``);
+    }
+
+    if (isEmpty(this.application.endpointKey)) {
+      //@TODO
+      throw new Error(``);
+    }
   }
 }
 
 //  ######################################### INTERNAL API #########################################
 
 //  ----------------------------------------- Activity Inspectors -----------------------------------------
-type IActivityInspector = (activity: IActivity) => string[];
+type IActivityInspector = (activity: Activity) => string[];
 
-const textInspector: IActivityInspector = (activity: IActivity): string[] => {
+const textInspector: IActivityInspector = (activity: Activity): string[] => {
   const text = activity.text || '';
   return PatternRecognizer.extractPatterns(text);
 };
 
-const speakInspector: IActivityInspector = (activity: IActivity): string[] => {
+const speakInspector: IActivityInspector = (activity: Activity): string[] => {
   const text = activity.speak || '';
   return PatternRecognizer.extractPatterns(text);
 };
 
 const suggestedActionsInspector: IActivityInspector = (
-  activity: IActivity,
+  activity: Activity,
 ): string[] => {
   if (activity.suggestedActions && activity.suggestedActions.actions) {
     return activity.suggestedActions.actions.reduce((acc, action) => {
@@ -179,14 +145,40 @@ const suggestedActionsInspector: IActivityInspector = (
   return [];
 };
 
+/**
+ * @private
+ */
+export class ActivityInspector {
+  constructor(private readonly activity: Activity) {}
+
+  // Searches for template references inside the activity and constructs slots
+  public extractTemplateReferencesSlots(): Slot[] {
+    // Utilize activity inspectors to extract the template references
+    const inspectors = [
+      ...textInspector(this.activity),
+      ...speakInspector(this.activity),
+      ...suggestedActionsInspector(this.activity),
+    ];
+
+    const stateNames = new Set(inspectors);
+    const slots: Slot[] = [];
+
+    stateNames.forEach(stateName => {
+      slots.push(new Slot(Slot.STATE_NAME_KEY, stateName));
+    });
+
+    return slots;
+  }
+}
+
 //  ----------------------------------------- Activity Injectors -----------------------------------------
 type IActivityInjector = (
-  activity: IActivity,
+  activity: Activity,
   templateResolutions: Map<string, string>,
 ) => void;
 
 const textInjector: IActivityInjector = (
-  activity: IActivity,
+  activity: Activity,
   templateResolutions: Map<string, string>,
 ): void => {
   const text = activity.text;
@@ -199,7 +191,7 @@ const textInjector: IActivityInjector = (
 };
 
 const speakInjector: IActivityInjector = (
-  activity: IActivity,
+  activity: Activity,
   templateResolutions: Map<string, string>,
 ): void => {
   const speak = activity.speak;
@@ -212,7 +204,7 @@ const speakInjector: IActivityInjector = (
 };
 
 const suggestedActionsInjector: IActivityInjector = (
-  activity: IActivity,
+  activity: Activity,
   templateResolutions: Map<string, string>,
 ): void => {
   if (activity.suggestedActions && activity.suggestedActions.actions) {
@@ -234,7 +226,27 @@ const suggestedActionsInjector: IActivityInjector = (
   }
 };
 
+/**
+ * @private
+ */
+export class ActivityInjector {
+  constructor(private readonly activity: Activity) {}
+  // Searches for template references inside the activity and replaces them with the actual text coming from the LG backend
+  public injectTemplateReferences(
+    templateReferences: Map<string, string>,
+  ): void {
+    const injectors: IActivityInjector[] = [
+      textInjector,
+      speakInjector,
+      suggestedActionsInjector,
+    ];
+
+    injectors.forEach(injector => injector(this.activity, templateReferences));
+  }
+}
+
 //  ----------------------------------------- Utilities -----------------------------------------
+
 /**
  * @private
  */
@@ -278,57 +290,45 @@ export class PatternRecognizer {
 /**
  * @private
  */
-export class ActivityUtilities {
-  static convertEntitiesToSlots(entities: Map<string, PrimitiveType>): any {
-    throw new Error('Method not implemented.');
+export class SlotsBuilder {
+  constructor(private readonly activity: Activity) {}
+
+  public build(entities: Map<string, PrimitiveType>): [Slot[], Slot[]] {
+    const activityInspector = new ActivityInspector(this.activity);
+
+    const templateReferencesSlots = activityInspector.extractTemplateReferencesSlots();
+
+    const entitiesSlots = this.convertEntitiesToSlots(entities);
+
+    return [templateReferencesSlots, entitiesSlots];
   }
-  // Searches for template references inside the activity and constructs slots
-  public static extractTemplateReferencesSlots(activity: IActivity): Slot[] {
-    // Utilize activity inspectors to extract the template references
-    const inspectors = [
-      ...textInspector(activity),
-      ...speakInspector(activity),
-      ...suggestedActionsInspector(activity),
-    ];
 
-    const stateNames = new Set(inspectors);
+  private convertEntitiesToSlots(entities: Map<string, PrimitiveType>): Slot[] {
     const slots: Slot[] = [];
-
-    stateNames.forEach(stateName => {
-      slots.push(new Slot(Slot.STATE_NAME_KEY, stateName));
-    });
+    entities.forEach((value, key) => slots.push(new Slot(key, value)));
 
     return slots;
   }
-
-  // Searches for template references inside the activity and replaces them with the actual text coming from the LG backend
-  public static injectResponses(
-    activity: IActivity,
-    templateReferences: Map<string, string>,
-  ): void {
-    const injectors: IActivityInjector[] = [
-      textInjector,
-      speakInjector,
-      suggestedActionsInjector,
-    ];
-
-    injectors.forEach(injector => injector(activity, templateReferences));
-  }
 }
 
-// Not implemented
+/**
+ * @private
+ */
 export class Slot {
   public static readonly STATE_NAME_KEY = 'GetStateName';
   constructor(public readonly key: string, public value: PrimitiveType) {}
 }
 
 //  ----------------------------------------- LG API -----------------------------------------
-
-class Utilities {
-  public static convertLGValueToString(value: ILGValue): string {
+/**
+ * @private
+ */
+export class Utilities {
+  public static convertLGValueToString(value: LGValue): string {
     switch (value.valueType) {
       case 0:
         return value.stringValues[0];
+      // @TODO The return type shoyuld be strings only
       case 1:
         return value.intValues[0].toString();
       case 2:
@@ -342,7 +342,8 @@ class Utilities {
         throw new Error('Internal Error');
     }
   }
-  public static convertSlotToLGValue(slot: Slot): ILGValue {
+
+  public static convertSlotToLGValue(slot: Slot): LGValue {
     const value = slot.value;
 
     if (isString(value)) {
@@ -358,7 +359,7 @@ class Utilities {
         };
       } else {
         return {
-          intValues: [value],
+          floatValues: [value],
           valueType: 2,
         };
       }
@@ -370,16 +371,42 @@ class Utilities {
     } else if (isDate(value)) {
       return {
         dateTimeValues: [value.toISOString()],
-        valueType: 3,
+        valueType: 4,
       };
     }
+  }
 
-    // @TODO
-    throw new Error('');
+  public static extractTemplateReferenceAndResolution(
+    res: LGResponse,
+  ): [string, string] {
+    const templateReference = Object.keys(res.outputs)[0];
+    const templateResolution = res.outputs[templateReference];
+    const templateResolutionStr = Utilities.convertLGValueToString(
+      templateResolution,
+    );
+
+    return [templateReference, templateResolutionStr];
+  }
+
+  public static transformLGResponsestoMap(
+    responses: LGResponse[],
+  ): Map<string, string> {
+    const templateResolutions = new Map<string, string>();
+
+    responses
+      .map(Utilities.extractTemplateReferenceAndResolution)
+      .forEach(([templateReference, templateResolution]) => {
+        templateResolutions.set(templateReference, templateResolution);
+      });
+
+    return templateResolutions;
   }
 }
 
-interface ILGValue {
+/**
+ * @private
+ */
+export interface LGValue {
   valueType: 0 | 1 | 2 | 3 | 4;
   stringValues?: string[]; // valueType -> 0
   intValues?: number[]; // valueType -> 1
@@ -389,10 +416,13 @@ interface ILGValue {
   dateTimeValues?: string[]; // valueType -> 4
 }
 
-interface ILGRequest {
+/**
+ * @private
+ */
+interface LGRequest {
   scenario: string;
   locale: string;
-  slots: { [key: string]: ILGValue };
+  slots: { [key: string]: LGValue };
 }
 
 class LGRequestBuilder {
@@ -418,8 +448,8 @@ class LGRequestBuilder {
     return this;
   }
 
-  public build(): ILGRequest {
-    const slotsJSON: { [key: string]: ILGValue } = this.slots.reduce(
+  public build(): LGRequest {
+    const slotsJSON: { [key: string]: LGValue } = this.slots.reduce(
       (acc, slot) => {
         const lgValue = Utilities.convertSlotToLGValue(slot);
         acc[slot.key] = lgValue;
@@ -436,279 +466,32 @@ class LGRequestBuilder {
   }
 }
 
-interface ILGResponse {
-  outputs: { [key: string]: ILGValue };
+interface LGResponse {
+  outputs: { [key: string]: LGValue };
 }
 
-class LGAPI {
-  private readonly URL = 'https://lg-cris-dev.westus2.cloudapp.azure.com/v1/lg';
+/**
+ * @private
+ */
+export class LGAPI {
+  public static readonly BASE_URL =
+    'https://lg-cris-dev.westus2.cloudapp.azure.com/';
+  public static readonly RESOURCE_URL = 'v1/lg';
   constructor(
-    private readonly lgEndpoint: LanguageGenerationEndpoint,
-    private readonly lgOptions: LanguageGenerationOptions,
+    private readonly application: LanguageGenerationApplication,
+    private readonly options: LanguageGenerationOptions,
   ) {}
 
-  public async fetch(lgRequest: ILGRequest): Promise<ILGResponse> {
+  public fetch = async (lgRequest: LGRequest): Promise<LGResponse> => {
     return await request({
-      url: this.URL,
+      url: LGAPI.BASE_URL + LGAPI.RESOURCE_URL,
       method: 'POST',
-      headers: { Authorization: this.lgEndpoint.endpointKey },
+      //@todo
+      headers: { Authorization: this.application.endpointKey },
       body: {
         ...lgRequest,
       },
       json: true,
     });
-  }
-}
-
-const describe = (text: string, cb: () => void) => {
-  console.log(`> ${text}`);
-  try {
-    cb();
-    console.log('All tests passed');
-  } catch (e) {
-    console.log('Some tests failed');
-  }
-};
-
-const it = (text: string, cb: () => void) => {
-  try {
-    console.log(`   - ${text}`);
-    cb();
-  } catch (e) {
-    console.error(e);
-  }
-};
-
-const expect = val => {
-  return {
-    toBe: comparedVal => {
-      if (val !== comparedVal) {
-        throw new Error(`    ${val} isn't ${comparedVal}`);
-      }
-    },
-    toEqual: comparedVal => {
-      if (val !== comparedVal) {
-        throw new Error(`    ${val} doesn't equal ${comparedVal}`);
-      }
-    },
-    toBeTruthy: () => {
-      if (val !== true) {
-        throw new Error(`    ${val} isn't truthy`);
-      }
-    },
-    toBeFalsy: () => {
-      if (val !== false) {
-        throw new Error(`    ${val} isn't falsy`);
-      }
-    },
   };
-};
-
-describe('PatternRecognizer', () => {
-  it('should extract all template references', () => {
-    const templateReferences = PatternRecognizer.extractPatterns(
-      '[sayGoodMorning]',
-    );
-
-    expect(templateReferences[0]).toEqual('sayGoodMorning');
-
-    const templateReferences1 = PatternRecognizer.extractPatterns(
-      '[sayHello], John! [welcomePhrase] to the {new} office.',
-    );
-
-    expect(templateReferences1[0]).toEqual('sayHello');
-    expect(templateReferences1[1]).toEqual('welcomePhrase');
-    expect(templateReferences1.length).toEqual(2);
-
-    const templateReferences2 = PatternRecognizer.extractPatterns(
-      '[sayGoodBye], John! [thankingPhrase] for your time, [scheduleMeeting].',
-    );
-    expect(templateReferences2[0]).toEqual('sayGoodBye');
-    expect(templateReferences2[1]).toEqual('thankingPhrase');
-    expect(templateReferences2[2]).toEqual('scheduleMeeting');
-  });
-
-  it('should return an empty array if no template references are found', () => {
-    const templateReferences = PatternRecognizer.extractPatterns(
-      'Hello John, welcome to BF!',
-    );
-    expect(templateReferences.length).toBe(0);
-  });
-
-  it('should replace all template references with their corresponding resolutions', () => {
-    const templateReferences = new Map().set('sayGoodMorning', 'Hello');
-
-    const newUtterance = PatternRecognizer.replacePatterns(
-      '[sayGoodMorning]',
-      templateReferences,
-    );
-
-    expect(newUtterance).toEqual('Hello');
-
-    const templateReferences1 = new Map()
-      .set('sayHello', 'hello')
-      .set('welcomePhrase', 'welcome');
-
-    const newUtterance1 = PatternRecognizer.replacePatterns(
-      '[sayHello], John! [welcomePhrase] to the {new} office.',
-      templateReferences1,
-    );
-
-    expect(newUtterance1).toEqual('hello, John! welcome to the {new} office.');
-
-    const templateReferences2 = new Map()
-      .set('sayGoodBye', 'Bye')
-      .set('thankingPhrase', 'thanks')
-      .set('scheduleMeeting', `let's have a meeting`);
-
-    const newUtterance2 = PatternRecognizer.replacePatterns(
-      '[sayGoodBye], John! [thankingPhrase] for your time, [scheduleMeeting].',
-      templateReferences2,
-    );
-
-    expect(newUtterance2).toEqual(
-      `Bye, John! thanks for your time, let's have a meeting.`,
-    );
-  });
-  it('should keep text as is if no template references are found', () => {
-    const templateReferences = new Map().set('sayGoodMorning', 'Hello');
-
-    const newUtterance = PatternRecognizer.replacePatterns(
-      'Hello John, welcome to BF!',
-      templateReferences,
-    );
-
-    expect(newUtterance).toEqual('Hello John, welcome to BF!');
-  });
-});
-
-class CardAction implements ICardAction {
-  public type: string;
-  public title: string;
-  public image?: string;
-  public text?: string;
-  public displayText?: string;
-  public value: any;
 }
-
-class SuggestedActions implements ISuggestedActions {
-  public to: string[];
-  public actions: ICardAction[];
-}
-
-class Activity implements IActivity {
-  public type: string;
-  public id?: string;
-  public timestamp?: Date;
-  public localTimestamp?: Date;
-  public serviceUrl: string;
-  public channelId: string;
-  public from: import('../../botframework-schema/src').ChannelAccount;
-  public conversation: import('../../botframework-schema/src').ConversationAccount;
-  public recipient: import('../../botframework-schema/src').ChannelAccount;
-  public textFormat?: string;
-  public attachmentLayout?: string;
-  public membersAdded?: import('../../botframework-schema/src').ChannelAccount[];
-  public membersRemoved?: import('../../botframework-schema/src').ChannelAccount[];
-  public reactionsAdded?: import('../../botframework-schema/src').MessageReaction[];
-  public reactionsRemoved?: import('../../botframework-schema/src').MessageReaction[];
-  public topicName?: string;
-  public historyDisclosed?: boolean;
-  public locale?: string;
-  public text: string;
-  public speak?: string;
-  public inputHint?: string;
-  public summary?: string;
-  public suggestedActions?: import('../../botframework-schema/src').SuggestedActions;
-  public attachments?: import('../../botframework-schema/src').Attachment[];
-  public entities?: import('../../botframework-schema/src').Entity[];
-  public channelData?: any;
-  public action?: string;
-  public replyToId?: string;
-  public label: string;
-  public valueType: string;
-  public value?: any;
-  public name?: string;
-  public relatesTo?: import('../../botframework-schema/src').ConversationReference;
-  public code?: string;
-  public expiration?: Date;
-  public importance?: string;
-  public deliveryMode?: string;
-  public textHighlights?: import('../../botframework-schema/src').TextHighlight[];
-}
-
-describe('ActivityUtilities', () => {
-  const activity = new Activity();
-  activity.text = '[sayHello], John! [welcomePhrase] to the new office.';
-  activity.speak =
-    '[sayGoodBye], John! [thankingPhrase] for your time, [scheduleMeeting].';
-
-  activity.suggestedActions = new SuggestedActions();
-
-  const cardAction = new CardAction();
-  cardAction.text = '[sayGoodAfternoon]';
-  cardAction.displayText = '[sayGoodNight]';
-
-  activity.suggestedActions.actions = [cardAction];
-
-  it('should extract all the template references from the given activity and use them to construct the slots array', () => {
-    const entitiesMap = new Map().set('name', 'John').set('age', 12);
-
-    const slots = ActivityUtilities.extractSlots(activity, entitiesMap);
-
-    expect(slots.length).toBe(7);
-    expect(
-      slots.every(
-        slot =>
-          !isEmpty(slot.stateName) &&
-          slot.entities.has('name') &&
-          slot.entities.has('age'),
-      ),
-    ).toBeTruthy();
-  });
-
-  it('should inject the template resolutions in their respective references in the activity', () => {
-    const responsesMap = new Map([
-      ['sayHello', 'hello'],
-      ['welcomePhrase', 'welcome'],
-      ['sayGoodBye', 'bye'],
-      ['thankingPhrase', 'thanks'],
-      ['scheduleMeeting', `let's have a meeting`],
-      ['sayGoodAfternoon', 'good afternoon'],
-      ['sayGoodNight', 'good night'],
-    ]);
-
-    ActivityUtilities.injectResponses(activity, responsesMap);
-
-    expect(activity.text).toEqual('hello, John! welcome to the new office.');
-    expect(activity.speak).toEqual(
-      "bye, John! thanks for your time, let's have a meeting.",
-    );
-    expect(activity.suggestedActions.actions[0].text).toEqual('good afternoon');
-    expect(activity.suggestedActions.actions[0].displayText).toEqual(
-      'good night',
-    );
-  });
-});
-
-describe('LanguageGenerationResolver', () => {
-  it('', () => {
-    const resolver = new LanguageGenerationResolver(
-      new LanguageGenerationEndpoint('qw', 'rt', 'yu'),
-      new LanguageGenerationOptions(),
-    );
-
-    const activity = new Activity();
-    activity.text = '[sayHello], John! [welcomePhrase] to the new office.';
-    activity.speak = '[sayHi] Micheal, what is the weather like [today]';
-
-    const entities = new Map<string, PrimitiveType>();
-
-    resolver.resolve(activity, entities).then(() => {
-      expect(activity.text).toEqual('hello, John! hello to the new office.');
-      expect(activity.speak).toEqual(
-        'hello Micheal, what is the weather like hello',
-      );
-    });
-  });
-});
