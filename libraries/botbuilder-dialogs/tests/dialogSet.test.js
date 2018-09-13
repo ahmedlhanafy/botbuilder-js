@@ -1,115 +1,84 @@
-const { ConversationState, MemoryStorage, TestAdapter } = require('botbuilder-core');
-const { Dialog, DialogSet, WaterfallDialog, DialogTurnStatus } = require('../');
+const { TestAdapter, TurnContext } = require('botbuilder-core');
+const { DialogSet } =  require('../');
 const assert = require('assert');
 
 const beginMessage = { text: `begin`, type: 'message' };
 const continueMessage = { text: `continue`, type: 'message' };
 
-describe('DialogSet', function () {
+class TestContext extends TurnContext {
+    constructor(request) {
+        super(new TestAdapter(), request);
+        this.sent = undefined;
+        this.onSendActivities((context, activities, next) => {
+            this.sent = activities;
+            context.responded = true;
+        });
+    }
+}
+
+describe.skip('DialogSet', function() {
     this.timeout(5000);
 
-    it('should add a waterfall to the dialog set.', function (done) {
-        // Create new ConversationState with MemoryStorage and instantiate DialogSet with PropertyAccessor.
-        const convoState = new ConversationState(new MemoryStorage());
-
-        const dialogState = convoState.createProperty('dialogState');
-        const dialogs = new DialogSet(dialogState);
-        dialogs.add(new WaterfallDialog('a', [
-            function (step) {
-                assert(step);
-            }
-        ]));
-        done();
-    });
-
-    it('should add add fluent dialogs to the dialog set.', function (done) {
-        // Create new ConversationState with MemoryStorage and instantiate DialogSet with PropertyAccessor.
-        const convoState = new ConversationState(new MemoryStorage());
-
-        const dialogState = convoState.createProperty('dialogState');
-        const dialogs = new DialogSet(dialogState);
-        dialogs
-            .add(new WaterfallDialog('A', [
-                function (dc) {
-                    assert(dc);
-                }
-            ]))
-            .add(new WaterfallDialog('B', [
-                function (dc) {
-                    assert(dc);
-                }
-            ]));
-        assert(dialogs.find('A'), `dialog A not found.`);
-        assert(dialogs.find('B'), `dialog B not found.`);
-
-        done();
-    });
-
-
     it('should throw an exception when trying to add the same dialog twice.', function (done) {
-        const convoState = new ConversationState(new MemoryStorage());
-
-        const dialogState = convoState.createProperty('dialogState');
-        const dialogs = new DialogSet(dialogState);
-        dialogs.add(new WaterfallDialog('a', [
-            function (step) { }
-        ]));
+        const dialogs = new DialogSet();
+        dialogs.add('a', [
+            function (dc) { }
+        ]);
 
         try {
             dialogs.add('a', [
-                function (step) { }
+                function (dc) { }
             ]);
-        } catch (err) {
-            return done();
+        } catch(err) {
+            done();
         }
-        throw new Error('Should have thrown an error on adding dialogs with same ID.');
     });
 
     it('should find() a dialog that was added.', function (done) {
-        const convoState = new ConversationState(new MemoryStorage());
-
-        const dialogState = convoState.createProperty('dialogState');
-        const dialogs = new DialogSet(dialogState);
-        dialogs.add(new WaterfallDialog('a', [
-            function (step) { }
-        ]));
+        const dialogs = new DialogSet();
+        dialogs.add('a', [
+            function (dc) { }
+        ]);
 
         assert(dialogs.find('a'), `dialog not found.`);
         assert(!dialogs.find('b'), `dialog found that shouldn't exist.`);
         done();
     });
 
+    it('should add a waterfall to the dialog set.', function (done) {
+        const dialogs = new DialogSet();
+        dialogs.add('a', [
+            function (dc) {
+                assert(dc);
+                done();
+            }
+        ]);
+
+        const state = {};
+        const context = new TestContext(beginMessage);
+        const dc = dialogs.createContext(context, state);
+        dc.begin('a');
+    });
+
     it('should save dialog stack state between turns.', function (done) {
-        const adapter = new TestAdapter(async (turnContext) => {
-            const dc = await dialogs.createContext(turnContext);
-
-            const results = await dc.continue();
-            if (results.status === DialogTurnStatus.empty) {
-                await dc.begin('a');
-            }
-            await convoState.saveChanges(turnContext);
-        });
-
-        const convoState = new ConversationState(new MemoryStorage());
-
-        const dialogState = convoState.createProperty('dialogState');
-        const dialogs = new DialogSet(dialogState);
-        dialogs.add(new WaterfallDialog('a', [
-            async function (step) {
-                assert(step);
-                await step.context.sendActivity(`Greetings`);
-                return Dialog.EndOfTurn;
+        const dialogs = new DialogSet();
+        dialogs.add('a', [
+            function (dc) {
+                assert(dc);
+                return dc.context.sendActivity(`foo`);
             },
-            async function (step) {
-                await step.context.sendActivity('Good bye!');
-                return await step.end();
+            function (dc) {
+                assert(dc);
+                done();
             }
-        ]));
+        ]);
 
-        adapter.send(beginMessage)
-            .assertReply('Greetings')
-            .send(continueMessage)
-            .assertReply('Good bye!')
-            .then(() => done());
+        const state = {};
+        const context = new TestContext(beginMessage);
+        const dc = dialogs.createContext(context, state);
+        dc.begin('a').then(() => {
+            const dc2 = dialogs.createContext(context, state);
+            return dc2.continue();
+        });
     });
 });

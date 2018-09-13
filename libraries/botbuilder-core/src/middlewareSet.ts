@@ -74,16 +74,15 @@ export class MiddlewareSet implements Middleware {
      * @param middleware One or more middleware handlers(s) to register.
      */
     public use(...middleware: (MiddlewareHandler|Middleware)[]): this {
-        middleware.forEach((plugin: any) => {
+        middleware.forEach((plugin) => {
             if (typeof plugin === 'function') {
                 this.middleware.push(plugin);
             } else if (typeof plugin === 'object' && plugin.onTurn) {
-                this.middleware.push((context: TurnContext, next: Function) => plugin.onTurn(context, next));
+                this.middleware.push((context, next) => plugin.onTurn(context, next));
             } else {
                 throw new Error(`MiddlewareSet.use(): invalid plugin type being added.`);
             }
         });
-
         return this;
     }
 
@@ -93,7 +92,7 @@ export class MiddlewareSet implements Middleware {
      * @param next Function to invoke at the end of the middleware chain.
      */
     public run(context: TurnContext, next: () => Promise<void>): Promise<void> {
-        const handlers: MiddlewareHandler[] = this.middleware.slice();
+        const handlers = this.middleware.slice();
         function runNext(i: number): Promise<void> {
             try {
                 if (i < handlers.length) {
@@ -105,7 +104,6 @@ export class MiddlewareSet implements Middleware {
                 return Promise.reject(err);
             }
         }
-
         return runNext(0);
     }
 }

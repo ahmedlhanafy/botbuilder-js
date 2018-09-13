@@ -4,7 +4,8 @@
  * regenerated.
  */
 
-import * as moment from 'moment';
+import * as moment from "moment";
+
 
 /**
  * @class

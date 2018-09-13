@@ -57,7 +57,7 @@ function WithinDelta(token1, token2, delta, compare) {
 }
 
 function ExpectedPath(file) {
-    return __dirname + "/TestData/LuisRecognizer/" + file;
+    return __dirname + "/TestData/" + file;
 }
 
 function GetExpected(oracle) {

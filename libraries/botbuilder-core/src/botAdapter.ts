@@ -5,17 +5,17 @@
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Licensed under the MIT License.
  */
-import { Activity, ConversationReference, ResourceResponse } from 'botframework-schema';
-import { makeRevocable } from './internal';
-import {  Middleware, MiddlewareHandler, MiddlewareSet } from './middlewareSet';
+import { MiddlewareSet, MiddlewareHandler, Middleware } from './middlewareSet';
+import { Activity, ResourceResponse, ConversationReference } from 'botframework-schema';
 import { TurnContext } from './turnContext';
+import { makeRevocable } from './internal';
 
 /**
  * Abstract base class for all adapter plugins. Adapters manage the communication between the bot
  * and a user over a specific channel, or set of channels.
  */
 export abstract class BotAdapter {
-    private middleware: MiddlewareSet = new MiddlewareSet();
+    private middleware = new MiddlewareSet();
     private turnError: (context: TurnContext, error: Error) => Promise<void>;
 
     /**
@@ -45,10 +45,7 @@ export abstract class BotAdapter {
      * @param reference Conversation reference of the conversation being continued.
      * @param logic Function to execute for performing the bots logic.
      */
-    public abstract continueConversation(
-        reference: Partial<ConversationReference>,
-        logic: (revocableContext: TurnContext
-    ) => Promise<void>): Promise<void>;
+    public abstract continueConversation(reference: Partial<ConversationReference>, logic: (revocableContext: TurnContext) => Promise<void>): Promise<void>;
 
     public get onTurnError(): (context: TurnContext, error: Error) => Promise<void> {
         return this.turnError;
@@ -64,7 +61,6 @@ export abstract class BotAdapter {
      */
     public use(...middleware: (MiddlewareHandler|Middleware)[]): this {
         MiddlewareSet.prototype.use.apply(this.middleware, middleware);
-
         return this;
     }
 
@@ -80,24 +76,20 @@ export abstract class BotAdapter {
      */
     protected runMiddleware(context: TurnContext, next: (revocableContext: TurnContext) => Promise<void>): Promise<void> {
         // Wrap context with revocable proxy
-        const pContext: {
-            proxy: TurnContext;
-            revoke(): void;
-        } = makeRevocable(context);
-
-        return new Promise((resolve: any, reject: any): void => {
+        const pContext = makeRevocable(context);
+        return new Promise((resolve, reject) => {
             this.middleware.run(pContext.proxy, () => {
                 // Call next with revocable context
                 return next(pContext.proxy);
-            }).then(resolve, (err: Error) => {
+            }).then(() => resolve(), (err) => {
                 if (this.onTurnError) {
                     this.onTurnError(pContext.proxy, err)
-                        .then(resolve, reject);
+                        .then(() => resolve(), (err) => reject(err));
                 } else {
                     reject(err);
                 }
             });
-        }).then(() => pContext.revoke(), (err: Error) => {
+        }).then(() => pContext.revoke(), (err) => {
             pContext.revoke();
             throw err;
         });

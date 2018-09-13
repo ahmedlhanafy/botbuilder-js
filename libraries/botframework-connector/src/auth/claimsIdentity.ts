@@ -17,12 +17,12 @@ export interface Claim {
  * Represents a claims-based identity.
  */
 export class ClaimsIdentity {
-    public readonly isAuthenticated: boolean;
-    private readonly claims: Claim[];
+    readonly isAuthenticated: boolean;
+    readonly claims: Claim[];
 
     constructor(claims: Claim[], isAuthenticated: boolean) {
         this.claims = claims;
-        this.isAuthenticated = isAuthenticated;
+        this.isAuthenticated = true;
     }
 
     /**
@@ -30,9 +30,8 @@ export class ClaimsIdentity {
      * @param  {string} claimType The claim type to look for
      * @returns {string|null} The claim value or null if not found
      */
-    public getClaimValue(claimType: string): string | null {
-        const claim: Claim = this.claims.find((c: Claim) => c.type === claimType);
-
+    getClaimValue(claimType: string): string | null {
+        let claim = this.claims.find(c => c.type === claimType);
         return claim ? claim.value : null;
     }
 }

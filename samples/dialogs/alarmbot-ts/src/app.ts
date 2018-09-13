@@ -1,6 +1,6 @@
-import { BotFrameworkAdapter, BotStateSet, ConversationState, MemoryStorage, UserState } from 'botbuilder';
-import * as restify from 'restify';
+import { BotFrameworkAdapter, ConversationState, UserState, BotStateSet, MemoryStorage } from 'botbuilder';
 import { Bot } from './bot';
+import * as restify from 'restify';
 
 // Create server
 let server = restify.createServer();
@@ -28,6 +28,6 @@ server.post('/api/messages', (req, res) => {
     // Route received request to adapter for processing
     adapter.processActivity(req, res, async (context) => {
         // Dispatch to bot
-        await bot.onActivity(context);
+        await bot.dispatchActivity(context);
     });
 });

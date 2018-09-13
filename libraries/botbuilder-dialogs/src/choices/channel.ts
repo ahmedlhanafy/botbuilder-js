@@ -2,7 +2,7 @@
  * @module botbuilder-dialogs
  */
 /**
- * Copyright (c) Microsoft Corporation. All rights reserved.
+ * Copyright (c) Microsoft Corporation. All rights reserved.  
  * Licensed under the MIT License.
  */
 import { TurnContext } from 'botbuilder-core';
@@ -10,7 +10,7 @@ import { TurnContext } from 'botbuilder-core';
 /**
  * @private
  */
-export const channels: any = {
+export const channels = {
     facebook: 'facebook',
     skype: 'skype',
     msteams: 'msteams',
@@ -29,10 +29,10 @@ export const channels: any = {
 
 /**
  * @private
- * @param channelId the id of a channel
- * @param buttonCnt count of buttons allowed
+ * @param channelId 
+ * @param buttonCnt 
  */
-export function supportsSuggestedActions(channelId: string, buttonCnt: number = 100): boolean {
+export function supportsSuggestedActions(channelId: string, buttonCnt = 100) {
     switch (channelId) {
         case channels.facebook:
         case channels.skype:
@@ -50,10 +50,10 @@ export function supportsSuggestedActions(channelId: string, buttonCnt: number = 
 
 /**
  * @private
- * @param channelId the id of a channel
- * @param buttonCnt count of buttons allowed
+ * @param channelId 
+ * @param buttonCnt 
  */
-export function supportsCardActions(channelId: string, buttonCnt: number = 100): boolean {
+export function supportsCardActions(channelId: string, buttonCnt = 100) {
     switch (channelId) {
         case channels.facebook:
         case channels.skype:
@@ -72,9 +72,9 @@ export function supportsCardActions(channelId: string, buttonCnt: number = 100):
 
 /**
  * @private
- * @param channelId id of a channel
+ * @param channelId 
  */
-export function hasMessageFeed(channelId: string): boolean {
+export function hasMessageFeed(channelId: string) {
     switch (channelId) {
         case channels.cortana:
             return false;
@@ -85,15 +85,15 @@ export function hasMessageFeed(channelId: string): boolean {
 
 /**
  * @private
- * @param channelId id of a channel
+ * @param channelId 
  */
-export function maxActionTitleLength(channelId: string): number {
+export function maxActionTitleLength(channelId: string) {
     return 20;
 }
 
 /**
  * @private
- * @param context a TurnContext object representing an incoming message
+ * @param context 
  */
 export function getChannelId(context: TurnContext): string {
     return context.activity.channelId || '';

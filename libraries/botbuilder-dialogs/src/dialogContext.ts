@@ -1,4 +1,3 @@
-// tslint:disable
 /**
  * @module botbuilder-dialogs
  */
@@ -7,7 +6,7 @@
  * Licensed under the MIT License.
  */
 import { TurnContext, Activity } from 'botbuilder-core';
-import { DialogInstance, DialogTurnResult, DialogTurnStatus, DialogReason } from './dialog';
+import { DialogInstance, DialogTurnResult, DialogReason } from './dialog';
 import { DialogSet } from './dialogSet';
 import { PromptOptions } from './prompts';
 import { Choice } from './choices';
@@ -25,7 +24,8 @@ export interface DialogState
  * through to all of the bots dialogs and waterfall steps.
  * 
  * ```JavaScript
- * const dc = await dialogs.createContext(context);  
+ * const conversation = conversationState.get(context);
+ * const dc = dialogs.createContext(context, conversation);  
  * ```
  */
 export class DialogContext {
@@ -103,20 +103,16 @@ export class DialogContext {
         this.stack.push(instance);
             
         // Call dialogs begin() method.
-        return await dialog.dialogBegin(this, options);
+        const turnResult = await dialog.dialogBegin(this, options);
+        return this.verifyTurnResult(turnResult);
     }
 
     /**
      * Cancels all dialogs on the stack resulting in an empty stack.
      */
-    public async cancelAll(): Promise<DialogTurnResult> {
-        if (this.stack.length > 0) {
-            while (this.stack.length > 0) {
-                await this.endActiveDialog(DialogReason.cancelCalled);
-            }
-            return { status: DialogTurnStatus.cancelled };
-        } else {
-            return { status: DialogTurnStatus.empty };
+    public async cancelAll(): Promise<void> {
+        while (this.stack.length > 0) {
+            await this.endActiveDialog(DialogReason.cancelCalled);
         }
     }
 
@@ -134,13 +130,14 @@ export class DialogContext {
      * @param promptOrOptions Initial prompt to send the user or a set of options to configure the prompt with..
      * @param choicesOrOptions (Optional) array of choices associated with the prompt.
      */
-    public async prompt(dialogId: string, promptOrOptions: string|Partial<Activity>|PromptOptions): Promise<DialogTurnResult>;
-    public async prompt(dialogId: string, promptOrOptions: string|Partial<Activity>, choices?: (string|Choice)[]): Promise<DialogTurnResult> {
+    public async prompt(dialogId: string, promptOrOptions: string|Partial<Activity>, choices?: (string|Choice)[]): Promise<DialogTurnResult>;
+    public async prompt(dialogId: string, promptOrOptions: PromptOptions): Promise<DialogTurnResult>;
+    public async prompt(dialogId: string, promptOrOptions: string|Partial<Activity>|PromptOptions, choices?: (string|Choice)[]): Promise<DialogTurnResult> {
         let options: PromptOptions;
-        if ((typeof promptOrOptions === 'object' && (promptOrOptions as Activity).type !== undefined) || typeof promptOrOptions === 'string') {
-            options = { prompt: promptOrOptions as string|Partial<Activity>, choices: choices };
-        } else {
+        if (typeof promptOrOptions === 'object' && (promptOrOptions as PromptOptions).prompt !== undefined) {
             options = Object.assign({}, promptOrOptions as PromptOptions);
+        } else {
+            options = { prompt: promptOrOptions as string|Partial<Activity>, choices: choices };
         }
         return this.begin(dialogId, options);
     }
@@ -175,9 +172,10 @@ export class DialogContext {
             if (!dialog) { throw new Error(`DialogContext.continue(): Can't continue dialog. A dialog with an id of '${instance.id}' wasn't found.`) }
 
             // Continue execution of dialog
-            return await dialog.dialogContinue(this);
+            const turnResult = await dialog.dialogContinue(this);
+            return this.verifyTurnResult(turnResult);
         } else {
-            return { status: DialogTurnStatus.empty };
+            return { hasActive: false, hasResult: false };
         }
     }
 
@@ -207,10 +205,11 @@ export class DialogContext {
             if (!dialog) { throw new Error(`DialogContext.end(): Can't resume previous dialog. A dialog with an id of '${instance.id}' wasn't found.`) }
             
             // Return result to previous dialog
-            return await dialog.dialogResume(this, DialogReason.endCalled, result);
+            const turnResult = await dialog.dialogResume(this, DialogReason.endCalled, result);
+            return this.verifyTurnResult(turnResult);
         } else {
             // Signal completion
-            return { status: DialogTurnStatus.complete, result: result };
+            return { hasActive: false, hasResult: true, result: result };
         }
     }
 
@@ -263,6 +262,17 @@ export class DialogContext {
             // Pop dialog off stack
             this.stack.pop() 
         }
+    }
+
+
+    /** @private helper to ensure the turn result from a dialog looks correct. */
+    private verifyTurnResult(result: DialogTurnResult): DialogTurnResult {
+        result.hasActive = this.stack.length > 0;
+        if (result.hasActive) {
+            result.hasResult = false;
+            result.result = undefined;
+        }
+        return result; 
     }
 }
 

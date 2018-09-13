@@ -4,10 +4,8 @@
  */
 export enum ServiceTypes {
     AppInsights = 'appInsights',
-    Bot = 'abs',
-    BlobStorage = 'blob',
-    CosmosDB = 'cosmosdb',
-    Generic = 'generic',
+    AzureBot = 'abs',
+    AzureStorage = 'azureStorage',
     Endpoint = 'endpoint',
     Luis = 'luis',
     QnA = 'qna',
@@ -17,14 +15,15 @@ export enum ServiceTypes {
 
 export interface IConnectedService {
     // ServiceType of the service (LUIS, QnA, etc.)
-    readonly type?: ServiceTypes;
+    readonly type: ServiceTypes;
 
     // Friendly name for the service
     name: string;
 
-    // unique Id for the service
+    // unique Id for the service (appid, etc)
     id?: string;
 }
+
 
 export interface IEndpointService extends IConnectedService {
     // type = ServiceTypes.Endpoint
@@ -33,7 +32,7 @@ export interface IEndpointService extends IConnectedService {
     // MSA Appid
     appId: string;
 
-    // MSA app password for the bot
+    // MSA app password for the bot 
     appPassword: string;
 
     // endpoint of localhost service
@@ -41,64 +40,52 @@ export interface IEndpointService extends IConnectedService {
 
 }
 
-export interface IAzureService extends IConnectedService {
-    // tenantId for azure
+export interface IAzureBotService extends IConnectedService {
+    // type = ServiceTypes.AzureBotService
+    // id = bot id
+
+    // tenantId for ABS registration
     tenantId: string;
 
-    // subscriptionId for azure
+    // subscriptionId for ABS registration
     subscriptionId: string;
 
-    // resourceGroup for azure
+    // resourceGroup for ABS registration
+    resourceGroup: string;
+}
+
+export interface IAppInsightsService extends IConnectedService {
+    // type = ServiceTypes.AppInsights
+    // id = service name
+
+    // tenantId for appInsights
+    tenantId: string;
+
+    // subscriptionId for appInsights
+    subscriptionId: string;
+
+    // resourceGroup for appInsights
     resourceGroup: string;
 
-    // name of the service
-    serviceName: string;
-}
-
-export interface IBotService extends IAzureService {
-    // type = ServiceTypes.AzureBotService
-
-    // MSA Appid for the bot
-    appId: string;
-}
-
-export interface IAppInsightsService extends IAzureService {
-    // type = ServiceTypes.AppInsights
-
-    // instrumentationKey for logging data to appInsights
+    // instrumentationKey for appInsights
     instrumentationKey: string;
-
-    // (OPTIONAL) applicationId is used for programmatic acccess to AppInsights
-    applicationId?: string;
-
-    // (OPTIONAL) named apiKeys for programatic access to AppInsights
-    apiKeys?: { [key: string]: string };
 }
 
-export interface IBlobStorageService extends IAzureService {
+export interface IAzureStorageService extends IConnectedService {
     // type = ServiceTypes.AzureStorage
+    // id = service name
 
-    // connectionstring for blob storage
+    // tenantId for storage
+    tenantId: string;
+
+    // subscriptionId for storage
+    subscriptionId: string;
+
+    // resourceGroup for storage
+    resourceGroup: string;
+
+    // connectionstring for storage
     connectionString: string;
-
-    // (OPTIONAL) container name
-    container?: string | null;
-}
-
-export interface ICosmosDBService extends IAzureService {
-    // type = ServiceTypes.CosmosDB
-
-    // endpoint/uri for CosmosDB
-    endpoint: string;
-    
-    // key for accessing CosmosDB
-    key: string;
-
-    // database name
-    database: string;
-
-    // collection anme
-    collection: string;
 }
 
 export interface ILuisService extends IConnectedService {
@@ -121,25 +108,32 @@ export interface ILuisService extends IConnectedService {
     region: string;
 }
 
-export interface IDispatchService extends ILuisService {
+export interface IDispatchService extends IConnectedService {
     // type = ServiceTypes.Dispatch
+    // id = appid
+
+    // luis appid
+    appId: string;
+
+    // authoring key for using authoring api
+    authoringKey: string;
+
+    // subscription key for using calling model api for predictions
+    subscriptionKey: string;
+
+    // version of the application
+    version: string;
 
     // service Ids that the dispatch model will dispatch across
     serviceIds: string[];
-}
 
-export interface IGenericService extends IConnectedService {
-    // type = ServiceTypes.Generic
-
-    // deep link to service
-    url: string;
-
-    // named/value configuration data
-    configuration: { [key: string]: string };
+    // region for service
+    region: string;
 }
 
 export interface IQnAService extends IConnectedService {
     // type=Servicestypes.QnA
+    // id = appid for the QnA service
 
     // subscriptionkey for calling admin api
     subscriptionKey: string;
@@ -150,15 +144,16 @@ export interface IQnAService extends IConnectedService {
     // hostname for private service endpoint Example: https://myqna.azurewebsites.net
     hostname: string;
 
-    // endpointKey for querying the kb
+    // endpointKey for querying the kb 
     endpointKey: string;
 }
 
 export interface IFileService extends IConnectedService {
     // type = ServiceTypes.File
+    // id = filePath
 
     // filePath
-    path: string;
+    filePath: string;
 }
 
 export interface IBotConfiguration {
@@ -171,9 +166,6 @@ export interface IBotConfiguration {
     // encrypted guid used to validate password is the same,
     // you need to be able to decrypt this key with passed in secret before we will use the secret to encrypt new values
     secretKey: string;
-
-    // version of the schema of this file
-    version: string;
 
     // connected services for the bot
     services: IConnectedService[];

@@ -6,12 +6,12 @@
  * Licensed under the MIT License.
  */
 import * as request from 'request';
-const getPem: any = require('rsa-pem-from-mod-exp');
-const base64url: any = require('base64url');
+var getPem = require('rsa-pem-from-mod-exp');
+var base64url = require('base64url');
 
 export class OpenIdMetadata {
     private url: string;
-    private lastUpdated: number = 0;
+    private lastUpdated = 0;
     private keys: IKey[];
 
     constructor(url: string) {
@@ -19,11 +19,11 @@ export class OpenIdMetadata {
     }
 
     public getKey(keyId: string): Promise<IOpenIdMetadataKey | null> {
-        return new Promise((resolve: any, reject: any): void => {
+        return new Promise((resolve, reject) => {
             // If keys are more than 5 days old, refresh them
-            const now: number = new Date().getTime();
+            var now = new Date().getTime();
             if (this.lastUpdated < (now - 1000 * 60 * 60 * 24 * 5)) {
-                this.refreshCache((err: any): void => {
+                this.refreshCache((err) => {
                     if (err) {
                         //logger.error('Error retrieving OpenId metadata at ' + this.url + ', error: ' + err.toString());
                         // fall through and return cached key on error
@@ -31,51 +31,51 @@ export class OpenIdMetadata {
                     }
 
                     // Search the cache even if we failed to refresh
-                    const key: IOpenIdMetadataKey = this.findKey(keyId);
+                    var key = this.findKey(keyId);
                     resolve(key);
                 });
             } else {
                 // Otherwise read from cache
-                const key: IOpenIdMetadataKey = this.findKey(keyId);
+                var key = this.findKey(keyId);
                 resolve(key);
             }
         });
     }
 
     private refreshCache(cb: (err: Error) => void): void {
-        const options: request.Options = {
+        var options: request.Options = {
             method: 'GET',
             url: this.url,
             json: true
         };
 
-        request(options, (err: any, response: any, body: any) => {
+        request(options, (err, response, body) => {
             if (!err && (response.statusCode && response.statusCode >= 400 || !body)) {
-                err = new Error(`Failed to load openID config: ${ response.statusCode }`);
+                err = new Error('Failed to load openID config: ' + response.statusCode);
             }
 
             if (err) {
                 cb(err);
             } else {
-                const openIdConfig: IOpenIdConfig = <IOpenIdConfig>body;
+                var openIdConfig = <IOpenIdConfig>body;
 
-                const get_key_options: request.Options = {
+                var options: request.Options = {
                     method: 'GET',
                     url: openIdConfig.jwks_uri,
                     json: true
                 };
 
-                request(get_key_options, (get_key_error: Error, get_key_response: any, get_key_body: any) => {
-                    if (!get_key_error && (get_key_response.statusCode && get_key_response.statusCode >= 400 || !get_key_body)) {
-                        get_key_error = new Error(`Failed to load Keys: ${ get_key_response.statusCode }`);
+                request(options, (err, response, body) => {
+                    if (!err && (response.statusCode && response.statusCode >= 400 || !body)) {
+                        err = new Error("Failed to load Keys: " + response.statusCode);
                     }
 
-                    if (!get_key_error) {
+                    if (!err) {
                         this.lastUpdated = new Date().getTime();
-                        this.keys = <IKey[]>get_key_body.keys;
+                        this.keys = <IKey[]>body.keys;
                     }
 
-                    cb(get_key_error);
+                    cb(err);
                 });
             }
         });
@@ -86,16 +86,17 @@ export class OpenIdMetadata {
             return null;
         }
 
-        for (const key of this.keys) {
-            if (key.kid === keyId) {
+        for (var i = 0; i < this.keys.length; i++) {
+            if (this.keys[i].kid == keyId) {
+                var key = this.keys[i];
 
                 if (!key.n || !key.e) {
                     // Return null for non-RSA keys
                     return null;
                 }
 
-                const modulus: any = base64url.toBase64(key.n);
-                const exponent: string = key.e;
+                var modulus = base64url.toBase64(key.n);
+                var exponent = key.e;
 
                 return { key: getPem(modulus, exponent), endorsements: key.endorsements } as IOpenIdMetadataKey;
             }
@@ -125,6 +126,6 @@ interface IKey {
 }
 
 export interface IOpenIdMetadataKey {
-    key: string;
+    key: string,
     endorsements?: string[];
 }

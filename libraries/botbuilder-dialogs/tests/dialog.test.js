@@ -1,100 +1,80 @@
-const { ConversationState, MemoryStorage, TestAdapter } = require('botbuilder-core');
-const { DialogSet, Dialog, DialogTurnStatus } = require('../');
+const { TestAdapter, TurnContext } = require('botbuilder-core');
+const { DialogSet, Dialog } =  require('../');
 const assert = require('assert');
 
 const beginMessage = { text: `begin`, type: 'message' };
 
+class TestContext extends TurnContext {
+    constructor(request) {
+        super(new TestAdapter(), request);
+        this.sent = undefined;
+        this.onSendActivities((context, activities, next) => {
+            this.sent = activities;
+            context.responded = true;
+        });
+    }
+}
+
 class TestDialog extends Dialog {
-    constructor(dialogId) {
-        super(dialogId);
+    constructor(options) {
+        super(options);
+        this.beginCalled = false;
         this.beginArgs = undefined;
         this.continueCalled = false;
     }
 
-    async dialogBegin(dc, options) {
-        assert(dc);
-        if (options) {
-            assert(options.test === 'test1', `received options and options.test ("${options.test}") was not "test1".`);
-        }
-        await dc.context.sendActivity('begin called');
-        return Dialog.EndOfTurn;
+    dialogBegin(dc, args) {
+        this.beginCalled = true;
+        this.beginArgs = args;
+        return dc.context.sendActivity(`begin called`);
     }
 
-    async dialogContinue(dc, options) {
-        return await dc.end(120);
+    dialogContinue(dc) {
+        this.continueCalled = true;
+        return dc.end(120);
     }
 }
 
-describe('Dialog', function () {
+describe.skip('Dialog', function() {
     this.timeout(5000);
 
-    it('should call dialog from a dialog set using dc.begin().', async function () {
-        // Initialize TestAdapter.
-        const adapter = new TestAdapter(async (turnContext) => {
-            const dc = await dialogs.createContext(turnContext);
+    it('should call dialog from a dialog set.', async function () {
+        const dialog = new TestDialog();
 
-            await dc.begin('testDialog');
-            await convoState.saveChanges(turnContext);
-        });
-        // Create new ConversationState with MemoryStorage and register the state as middleware.
-        const convoState = new ConversationState(new MemoryStorage());
+        const dialogs = new DialogSet();
+        dialogs.add('dialog', dialog);
 
-        // Create a DialogState property, DialogSet and register TestDialog.
-        const dialogState = convoState.createProperty('dialogState');
-        const dialogs = new DialogSet(dialogState);
-        const dialog = new TestDialog('testDialog');
-        dialogs.add(dialog);
-
-        await adapter.send(beginMessage)
-            .assertReply('begin called');
+        const state = {};
+        const context = new TestContext(beginMessage);
+        const dc = await dialogs.createContext(context, state);
+        await dc.begin('dialog', { foo: 'bar' })
+        assert(dialog.beginCalled);
+        assert(dialog.beginArgs && dialog.beginArgs.foo === 'bar');
     });
 
-    it('should receive dialog options when beginning a dialog from a dialog set.', async function () {
-        const adapter = new TestAdapter(async (turnContext) => {
-            const dc = await dialogs.createContext(turnContext);
-            await dc.begin('testDialog', { test: 'test1' });
-            await convoState.saveChanges(turnContext);
-        });
+    it('should call dialog using begin().', async function () {
+        const dialog = new TestDialog();
 
-        const convoState = new ConversationState(new MemoryStorage());
+        const state = {};
+        const context = new TestContext(beginMessage);
+        let completion = await dialog.begin(context, state, { foo: 'bar' });
 
-        const dialogState = convoState.createProperty('dialogState');
-        const dialogs = new DialogSet(dialogState);
-        const dialog = new TestDialog('testDialog');
-        dialogs.add(dialog);
-
-        await adapter.send(beginMessage)
-            .assertReply('begin called');
+        assert(completion && completion.isActive);
+        assert(dialog.beginCalled);
+        assert(dialog.beginArgs && dialog.beginArgs.foo === 'bar');
     });
 
     it('should continue() a multi-turn dialog.', async function () {
-        const adapter = new TestAdapter(async (turnContext) => {
-            const dc = await dialogs.createContext(turnContext);
+        const dialog = new TestDialog();
 
-            const results = await dc.continue();
-            switch (results.status) {
-                case DialogTurnStatus.empty:
-                    await dc.begin('testDialog');
-                    break;
+        const state = {};
+        const context = new TestContext(beginMessage);
+        let completion = await dialog.begin(context, state, { foo: 'bar' });
+        assert(completion && completion.isActive);
 
-                case DialogTurnStatus.complete:
-                    const finalResult = results.result;
-                    await turnContext.sendActivity(finalResult.toString());
-                    break;
-            }
-            await convoState.saveChanges(turnContext);
-        });
-
-        const convoState = new ConversationState(new MemoryStorage());
-
-        const dialogState = convoState.createProperty('dialogState');
-        const dialogs = new DialogSet(dialogState);
-        const dialog = new TestDialog('testDialog');
-        dialogs.add(dialog);
-
-        await adapter.send(beginMessage)
-            .assertReply('begin called')
-            .send('continue')
-            .assertReply('120');
+        completion = await dialog.continue(context, state);
+        assert(dialog.continueCalled);
+        assert(completion && !completion.isActive && completion.isCompleted);
+        assert(completion.result === 120);
     });
 });
