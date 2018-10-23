@@ -9,7 +9,7 @@ describe('NumberPrompt', function () {
         const adapter = new TestAdapter(async (turnContext) => {
             const dc = await dialogs.createContext(turnContext);
 
-            const results = await dc.continue();
+            const results = await dc.continueDialog();
             if (results.status === DialogTurnStatus.empty) {
                 await dc.prompt('prompt', 'Please send a number.');
             } else if (results.status === DialogTurnStatus.complete) {
@@ -37,7 +37,7 @@ describe('NumberPrompt', function () {
         const adapter = new TestAdapter(async (turnContext) => {
             const dc = await dialogs.createContext(turnContext);
 
-            const results = await dc.continue();
+            const results = await dc.continueDialog();
             if (results.status === DialogTurnStatus.empty) {
                 await dc.prompt('prompt', 'Please send a number.');
             } else if (results.status === DialogTurnStatus.complete) {
@@ -70,7 +70,7 @@ describe('NumberPrompt', function () {
         const adapter = new TestAdapter(async (turnContext) => {
             const dc = await dialogs.createContext(turnContext);
 
-            const results = await dc.continue();
+            const results = await dc.continueDialog();
             if (results.status === DialogTurnStatus.empty) {
                 await dc.prompt('prompt', { prompt: 'Please send a number.', retryPrompt: 'Please send a number between 1 and 100.' });
             } else if (results.status === DialogTurnStatus.complete) {
@@ -103,7 +103,7 @@ describe('NumberPrompt', function () {
         const adapter = new TestAdapter(async (turnContext) => {
             const dc = await dialogs.createContext(turnContext);
 
-            const results = await dc.continue();
+            const results = await dc.continueDialog();
             if (results.status === DialogTurnStatus.empty) {
                 await dc.prompt('prompt', { prompt: 'Please send a number.', retryPrompt: 'Please send a number between 1 and 100.' });
             } else if (results.status === DialogTurnStatus.complete) {
@@ -140,9 +140,9 @@ describe('NumberPrompt', function () {
         const adapter = new TestAdapter(async (turnContext) => {
             const dc = await dialogs.createContext(turnContext);
 
-            const results = await dc.continue();
+            const results = await dc.continueDialog();
             if (results.status === DialogTurnStatus.empty) {
-                await dc.begin('prompt');
+                await dc.beginDialog('prompt');
             } else if (results.status === DialogTurnStatus.complete) {
                 const reply = results.result.toString();
                 await turnContext.sendActivity(reply);
@@ -165,5 +165,40 @@ describe('NumberPrompt', function () {
             .send('25')
             .assertReply('25')
 
+    });
+
+    it ('should recognize 0 and zero as valid values', async function() {
+        const adapter = new TestAdapter(async (turnContext) => {
+            const dc = await dialogs.createContext(turnContext);
+
+            const results = await dc.continueDialog();
+            if (results.status === DialogTurnStatus.empty) {
+                await dc.prompt('prompt',{prompt: 'Send me a zero', retryPrompt: 'Send 0 or zero'});
+            } else if (results.status === DialogTurnStatus.complete) {
+                const reply = results.result.toString();
+                await turnContext.sendActivity(reply);
+            }
+            await convoState.saveChanges(turnContext);
+        });
+
+        const convoState = new ConversationState(new MemoryStorage());
+
+        const dialogState = convoState.createProperty('dialogState');
+        const dialogs = new DialogSet(dialogState);
+        dialogs.add(new NumberPrompt('prompt', async (prompt) => {
+            assert(prompt);
+            return prompt.recognized.value === 0;
+        }));
+
+        await adapter.send('Hello')
+            .assertReply('Send me a zero')
+            .send('100')
+            .assertReply('Send 0 or zero')
+            .send('0')
+            .assertReply('0')
+            .send('Another!')
+            .assertReply('Send me a zero')
+            .send('zero')
+            .assertReply('0')
     });
 });
