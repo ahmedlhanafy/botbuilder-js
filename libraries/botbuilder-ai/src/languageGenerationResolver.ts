@@ -828,6 +828,7 @@ export interface LGRequest {
 	slots: { [key: string]: LGValue };
 	templateId: string;
 	version: string;
+	refreshData: boolean;
 }
 
 /**
@@ -840,11 +841,10 @@ class LGRequestBuilder {
 	private templateId: string;
 	private version: string;
 
-	public setVersion(version: string){
+	public setVersion(version: string) {
 		this.version = version;
 
 		return this;
-
 	}
 
 	public setSlots(slots: Slot[]): LGRequestBuilder {
@@ -883,7 +883,8 @@ class LGRequestBuilder {
 			scenario: this.scenario,
 			slots: slotsJSON,
 			templateId: this.templateId,
-			version: this.version
+			version: this.version,
+			refreshData: true,
 		};
 	}
 }
